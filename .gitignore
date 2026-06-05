@@ -1,0 +1,26 @@
+
+# Harness: 本地工具与 Agent 运行产物
+.openspec-auto-backup/
+.openspec-auto/
+.idea/
+.vscode/
+.Ds_Store
+.DS_Store
+*.log
+findings.md
+progress.md
+task_plan.md
+.claude/
+.codex/
+.agents/
+openspec/
+AGENTS.md
+CLAUDE.md
+tools/
+.harness/VERSION
+.harness/
+
+# Go 工作区与覆盖率产物
+go.work
+go.work.sum
+coverage.out
