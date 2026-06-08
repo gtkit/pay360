@@ -8,6 +8,7 @@
 
 - `New` 现在会拒绝小于等于 0 的 `qid`，避免构造出无效客户端。
 - 业务接口收到 `errno=10012`（`ErrAccessToken`）时会强制刷新 `access_token` 并自动重试一次。
+- `QuerySpecialInvoice` 现在会拒绝非 `1`/`2` 的 `requestType`，避免无效专票查询请求发送到 360 平台。
 
 ### Fixed
 

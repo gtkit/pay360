@@ -158,6 +158,9 @@ func (c *Client) QuerySpecialInvoice(ctx context.Context, requestType, sourceID 
 	if requestType == "" || sourceID == "" {
 		return SpecialInvoiceQueryResult{}, fmt.Errorf("pay360: query special invoice: request_type/source_id 均为必填")
 	}
+	if requestType != SpecialInvoiceQueryIssue && requestType != SpecialInvoiceQueryCancel {
+		return SpecialInvoiceQueryResult{}, fmt.Errorf("pay360: query special invoice: request_type 必须为 1(开票查询) 或 2(红冲查询)")
+	}
 	biz := map[string]any{
 		"request_type": requestType,
 		"source_id":    sourceID,

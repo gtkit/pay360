@@ -533,6 +533,24 @@ func TestSpecialInvoiceFlow(t *testing.T) {
 	}
 }
 
+func TestQuerySpecialInvoiceRejectsInvalidRequestType(t *testing.T) {
+	var hit atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hit.Store(true)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New("a", 1, "s", WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.QuerySpecialInvoice(context.Background(), "3", "src"); err == nil {
+		t.Fatal("非法 request_type 应报错")
+	}
+	if hit.Load() {
+		t.Fatal("非法参数不应发起请求")
+	}
+}
+
 // --- 回调 ---
 
 func TestVerifyCallback(t *testing.T) {
@@ -650,6 +668,12 @@ func ExampleAckSuccess() {
 	out, _ := json.Marshal(AckSuccess())
 	fmt.Println(string(out))
 	// Output: {"code":200,"message":"success","data":""}
+}
+
+func ExampleAckResponse() {
+	out, _ := json.Marshal(AckResponse(500, "retry later", "job-1"))
+	fmt.Println(string(out))
+	// Output: {"code":500,"message":"retry later","data":"job-1"}
 }
 
 func ExampleParseCallback() {

@@ -73,7 +73,7 @@ data, err := p.MarshalForSDK() // 下发给前端，前端传入 SDK360.createOr
 | `PlainInvoice(ctx, PlainInvoiceRequest)` | 普票开具 |
 | `PlainInvoiceCancel(ctx, orderID)` | 普票红冲 |
 | `SpecialInvoice(ctx, SpecialInvoiceRequest)` | 专票开具（返回 `source_id`） |
-| `QuerySpecialInvoice(ctx, requestType, sourceID)` | 专票查询（开票/红冲进度） |
+| `QuerySpecialInvoice(ctx, requestType, sourceID)` | 专票查询（开票/红冲进度，`requestType` 仅允许 `SpecialInvoiceQueryIssue` 或 `SpecialInvoiceQueryCancel`） |
 | `SpecialInvoiceCancel(ctx, SpecialInvoiceCancelRequest)` | 专票红冲 |
 
 多数方法返回 `(headerTid string, err error)`；返回数据的方法（查询、开具）返回带 `HeaderTid` 字段的结果结构。
