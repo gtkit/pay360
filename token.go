@@ -61,12 +61,20 @@ func (c *Client) token(ctx context.Context) (string, error) {
 		return tok, nil
 	}
 
+	return c.refreshToken(ctx, false)
+}
+
+// refreshToken 刷新 access_token，并在同进程内单飞去重。
+// force 为 false 时会先双重检查缓存；force 为 true 时跳过缓存，直接换新 token。
+func (c *Client) refreshToken(ctx context.Context, force bool) (string, error) {
 	c.tokenMu.Lock()
 	defer c.tokenMu.Unlock()
 
-	// 双重检查：可能已有其它 goroutine 在等待锁期间完成刷新。
-	if tok, ok := c.cachedToken(ctx); ok {
-		return tok, nil
+	if !force {
+		// 双重检查：可能已有其它 goroutine 在等待锁期间完成刷新。
+		if tok, ok := c.cachedToken(ctx); ok {
+			return tok, nil
+		}
 	}
 
 	tok, expireAt, err := c.fetchToken(ctx)

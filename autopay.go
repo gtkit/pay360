@@ -23,6 +23,9 @@ func (c *Client) DoPost(ctx context.Context, req DoPostRequest) (headerTid strin
 	if req.OrderID == "" || req.AgreementNumber == "" || req.AutopayOrderID == "" {
 		return "", fmt.Errorf("pay360: dopost: order_id/agreement_number/autopay_orderid 均为必填")
 	}
+	if req.AutopayAmount <= 0 {
+		return "", fmt.Errorf("pay360: dopost: autopay_amount 必须为正（单位：分）")
+	}
 	biz := map[string]any{
 		"order_id":         req.OrderID,
 		"agreement_number": req.AgreementNumber,

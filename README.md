@@ -30,7 +30,7 @@ if err != nil {
 }
 ```
 
-凭据 `appid`、`qid`、`appsecret` 请勿硬编码，从配置或密钥管理服务读取。
+`qid` 必须为正数。凭据 `appid`、`qid`、`appsecret` 请勿硬编码，从配置或密钥管理服务读取。
 
 ### 可选项
 
@@ -152,6 +152,8 @@ type TokenCache interface {
 
 **重要**：即使共享存储，若多个实例同时刷新仍会互相作废。请在 `Store`/刷新处使用分布式锁（如 Redis `SETNX`），或采用单点刷新服务，业务实例只读缓存。
 
+当业务接口返回 `errno=10012`（`ErrAccessToken`）时，本包会强制刷新一次 `access_token` 并用新 token 重试该业务请求一次。该重试仅覆盖鉴权失败场景；业务错误、网络错误和其它平台错误不会自动重试。
+
 Redis 实现范式（伪代码）：
 
 ```go
@@ -172,7 +174,7 @@ c, _ := pay360.New(appid, qid, secret, pay360.WithTokenCache(&redisCache{rdb: rd
 本包是无状态的薄封装，**不内置限流、熔断、重试**——这些有状态、依赖部署拓扑的韧性策略应由调用方在服务层处理（如 `golang.org/x/time/rate`、`sony/gobreaker`）。本包只负责签名、鉴权与请求执行，职责单一。
 
 - **限频**（文档规定，请自行控制）：换 token 与退款 3 次/秒、订单查询 5 次/秒、发票相关 3 次/秒。换 token 已被内部缓存+单飞天然限频；业务接口的频率由调用方保证。
-- **`access_token` 失效重试**：单实例下 token 不会被外部作废，几乎不会遇到 `errno=10012`。多实例共享缓存时，若极窄竞态窗口内 token 被其它实例作废，本次请求可能返回 `ErrAccessToken`；由于 10012 是鉴权阶段拒绝、业务未执行，调用方可安全重试一次。如需自动重试可告知，我们再评估是否内置。
+- **`access_token` 失效重试**：单实例下 token 不会被外部作废，几乎不会遇到 `errno=10012`。多实例共享缓存时，若极窄竞态窗口内 token 被其它实例作废，本包会强制刷新并自动重试一次。仍然需要共享缓存与分布式锁，避免实例间长期互相作废 token。
 - **回调 body 大小**：`VerifyCallback`/`ParseCallback` 解析调用方传入的 body，请在 HTTP handler 用 `http.MaxBytesReader` 限制大小，防止超大请求耗内存。
 - **出站响应大小**：默认 HTTP 客户端限制响应体 ≤10 MiB，可经 `WithHTTPClient` 调整。
 

@@ -20,6 +20,9 @@ func (c *Client) Refund(ctx context.Context, req RefundRequest) (headerTid strin
 	if req.OrderID == "" || req.UserID == "" || req.RefundReason == "" {
 		return "", fmt.Errorf("pay360: refund: order_id/user_id/refund_reason 均为必填")
 	}
+	if req.OrderAmount <= 0 {
+		return "", fmt.Errorf("pay360: refund: order_amount 必须为正（单位：分）")
+	}
 	if utf8.RuneCountInString(req.RefundReason) > 200 {
 		return "", fmt.Errorf("pay360: refund: refund_reason 不能超过 200 个字符")
 	}

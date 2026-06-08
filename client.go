@@ -63,6 +63,9 @@ func New(appid string, qid int64, appsecret string, opts ...Option) (*Client, er
 	if appid == "" {
 		return nil, errors.New("pay360: appid 不能为空")
 	}
+	if qid <= 0 {
+		return nil, errors.New("pay360: qid 必须为正")
+	}
 	if appsecret == "" {
 		return nil, errors.New("pay360: appsecret 不能为空")
 	}
@@ -153,6 +156,18 @@ func (c *Client) call(ctx context.Context, method, path string, biz map[string]a
 		return "", err
 	}
 
+	tid, err := c.callWithToken(ctx, method, path, biz, out, token)
+	if errors.Is(err, ErrAccessToken) {
+		token, refreshErr := c.refreshToken(ctx, true)
+		if refreshErr != nil {
+			return tid, refreshErr
+		}
+		return c.callWithToken(ctx, method, path, biz, out, token)
+	}
+	return tid, err
+}
+
+func (c *Client) callWithToken(ctx context.Context, method, path string, biz map[string]any, out respEnvelope, token string) (string, error) {
 	params := map[string]any{
 		"appid":        c.appid,
 		"timestamp":    c.clock().Unix(),
@@ -172,7 +187,10 @@ func (c *Client) call(ctx context.Context, method, path string, biz map[string]a
 	signParams := stringifyForSign(params)
 	sign := buildSign(signParams, c.appsecret)
 
-	var tid string
+	var (
+		tid string
+		err error
+	)
 	if method == http.MethodGet {
 		signParams["sign"] = sign
 		tid, err = c.doRequest(ctx, method, path, c.baseURL+path+"?"+encodeQuery(signParams), nil, out)

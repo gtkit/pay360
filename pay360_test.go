@@ -194,6 +194,9 @@ func TestNewValidation(t *testing.T) {
 	if _, err := New("", 1, "s"); err == nil {
 		t.Fatal("空 appid 应报错")
 	}
+	if _, err := New("a", 0, "s"); err == nil {
+		t.Fatal("非法 qid 应报错")
+	}
 	if _, err := New("a", 1, ""); err == nil {
 		t.Fatal("空 appsecret 应报错")
 	}
@@ -237,6 +240,48 @@ func TestCallHeaderTidAndError(t *testing.T) {
 	}
 }
 
+func TestCallRefreshesTokenOnAccessTokenError(t *testing.T) {
+	var authCalls atomic.Int64
+	var refundCalls atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc(pathAuth, func(w http.ResponseWriter, _ *http.Request) {
+		call := authCalls.Add(1)
+		writeResp(w, fmt.Sprintf(`{"errno":0,"data":{"access_token":"tok-%d","expire_time":""}}`, call))
+	})
+	mux.HandleFunc(pathOrderRefund, func(w http.ResponseWriter, r *http.Request) {
+		call := refundCalls.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		var got map[string]any
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if call == 1 {
+			if got["access_token"] != "tok-1" {
+				t.Errorf("首次请求 token=%v, 期望 tok-1", got["access_token"])
+			}
+			writeResp(w, `{"errno":10012,"errmsg":"access_token 错误"}`)
+			return
+		}
+		if got["access_token"] != "tok-2" {
+			t.Errorf("重试请求 token=%v, 期望 tok-2", got["access_token"])
+		}
+		writeResp(w, `{"errno":0,"errmsg":"","data":{}}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := newClient(t, srv)
+
+	tid, err := c.Refund(context.Background(), RefundRequest{
+		OrderID: "o1", OrderAmount: 100, UserID: "u1", RefundReason: "test",
+	})
+	if err != nil || tid != testTid {
+		t.Fatalf("tid=%q err=%v", tid, err)
+	}
+	if authCalls.Load() != 2 || refundCalls.Load() != 2 {
+		t.Fatalf("authCalls=%d refundCalls=%d, 期望均为 2", authCalls.Load(), refundCalls.Load())
+	}
+}
+
 // --- 退款 ---
 
 func TestRefundReasonTooLong(t *testing.T) {
@@ -249,6 +294,26 @@ func TestRefundReasonTooLong(t *testing.T) {
 		OrderID: "o", UserID: "u", RefundReason: string(long),
 	}); err == nil {
 		t.Fatal("超长 refund_reason 应报错且不发请求")
+	}
+}
+
+func TestRefundRejectsNonPositiveAmount(t *testing.T) {
+	var hit atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hit.Store(true)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New("a", 1, "s", WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Refund(context.Background(), RefundRequest{
+		OrderID: "o", OrderAmount: 0, UserID: "u", RefundReason: "r",
+	}); err == nil {
+		t.Fatal("非正 order_amount 应报错")
+	}
+	if hit.Load() {
+		t.Fatal("非法参数不应发起请求")
 	}
 }
 
@@ -366,6 +431,26 @@ func TestDoPostSuccess(t *testing.T) {
 	})
 	if err != nil || tid != testTid {
 		t.Fatalf("tid=%q err=%v", tid, err)
+	}
+}
+
+func TestDoPostRejectsNonPositiveAmount(t *testing.T) {
+	var hit atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hit.Store(true)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New("a", 1, "s", WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.DoPost(context.Background(), DoPostRequest{
+		OrderID: "o", AgreementNumber: "a", AutopayAmount: 0, AutopayOrderID: "ap1",
+	}); err == nil {
+		t.Fatal("非正 autopay_amount 应报错")
+	}
+	if hit.Load() {
+		t.Fatal("非法参数不应发起请求")
 	}
 }
 

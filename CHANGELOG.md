@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `New` 现在会拒绝小于等于 0 的 `qid`，避免构造出无效客户端。
+- 业务接口收到 `errno=10012`（`ErrAccessToken`）时会强制刷新 `access_token` 并自动重试一次。
+
+### Fixed
+
+- `Refund` 和 `DoPost` 现在会在本地拒绝非正金额，避免无效请求发送到 360 平台。
+
 ## [0.1.0] - 2026-06-05
 
 ### Added
