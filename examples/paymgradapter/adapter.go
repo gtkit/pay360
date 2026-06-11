@@ -103,7 +103,8 @@ func (a *Adapter) Refund(ctx context.Context, req *paymgr.RefundRequest) (*paymg
 }
 
 // ParseNotify 验签并解析 360 订单推送回调，映射为统一通知结果。
-// 签约通知（callback_type=3）无支付语义，返回 ErrInvalidNotify 由上层忽略。
+// 签约通知（callback_type=3）无支付语义，appid/qid 不一致的回调不属于本应用，
+// 二者均返回 ErrInvalidNotify 由上层忽略。
 func (a *Adapter) ParseNotify(_ context.Context, r *http.Request) (*paymgr.NotifyResult, error) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -113,6 +114,9 @@ func (a *Adapter) ParseNotify(_ context.Context, r *http.Request) (*paymgr.Notif
 	if err != nil {
 		if errors.Is(err, pay360.ErrCallbackSign) {
 			return nil, paymgr.ErrInvalidSign
+		}
+		if errors.Is(err, pay360.ErrCallbackMismatch) {
+			return nil, paymgr.ErrInvalidNotify
 		}
 		return nil, err
 	}
