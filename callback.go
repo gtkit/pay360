@@ -56,7 +56,7 @@ type Callback struct {
 	Qid             int64  `json:"qid"`
 	Sign            string `json:"sign"`
 	Timestamp       int64  `json:"timestamp"`
-	TransTime       string `json:"trans_time"`
+	TransTime       string `json:"trans_time"` // 支付/退款时间；签约、解约推送中不使用，为占位值 0001-01-01 00:00:00
 
 	// Extra 为 OrderExtra 字段解析后的结构（callback_type 为 2/3 时有意义）。
 	Extra OrderExtra `json:"-"`

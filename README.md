@@ -243,6 +243,8 @@ go test -tags livetest -run 'TestLive(Auth|QueryOrder|Probe)' -count=1 -v ./...
 ## 注意事项
 
 - 请勿通过客户端轮询订单查询接口；SDK 本身会推送订单状态变更。
+- 通过任务系统完成的订单（任务单）不允许退款，`Refund` 此类订单会被平台拒绝。
+- 签约/取消签约推送（`callback_type=3`）中的 `trans_time` 不携带真实业务时间，为占位值 `0001-01-01 00:00:00`，请勿当作支付/退款时间落库。
 - 代扣失败重发须使用全新的 `AutopayOrderID`，复用旧值可能“失败但显示成功”。
 - 回调响应须在 10s 内返回，否则会被重复推送（最多补推 30 次）。
 - 专票申请后需人工审核（一般 5 个工作日内），通过 `QuerySpecialInvoice` 查询进度。

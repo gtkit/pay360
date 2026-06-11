@@ -16,6 +16,8 @@ type RefundRequest struct {
 }
 
 // Refund 申请订单退款。返回本次响应的 Header-Tid。
+//
+// 注意：通过任务系统完成的订单（任务单）不允许退款，平台会拒绝此类请求。
 func (c *Client) Refund(ctx context.Context, req RefundRequest) (headerTid string, err error) {
 	if req.OrderID == "" || req.UserID == "" || req.RefundReason == "" {
 		return "", fmt.Errorf("pay360: refund: order_id/user_id/refund_reason 均为必填")
