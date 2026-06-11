@@ -174,6 +174,8 @@ tid, err = c.ComplainReply(ctx, pay360.ComplainReplyRequest{
 
 退款成功后，如该订单关联投诉且关联订单均已关闭，平台会自动完结投诉。错误码哨兵：`ErrRateLimited`(10018)、`ErrComplainNotFound`(10034)、`ErrComplainReplyLimit`(10035)。
 
+> 实测注意：`RefundOrders` 对不存在的订单返回 `errno=10003 msg="数据不存在"`，与主文档错误表中 10003（厂商信息不存在）同码不同义；`ErrVendorNotFound` 仅按错误码判等，在 v2 退款场景下请结合 `APIError.Msg` 判断。
+
 ### 投诉 webhook（入站）
 
 360 会向你在联运后台配置的回调地址推送投诉事件（`COMPLAINT_CREATED`/`REPLY_ADDED`/`STATUS_CHANGED`）。验签规则与订单推送**不同**：仅 `data`（请求原文）与 `timestamp` 参与签名，密钥优先厂商密钥（`WithVendorKey` 配置，未配置回落 appsecret）：

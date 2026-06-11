@@ -164,6 +164,37 @@ func TestLiveProbe(t *testing.T) {
 	classify(t, "special_invoice_cancel", err)
 }
 
+// TestLiveProbeComplaint 对客诉接口（v2 退款、投诉回复、投诉完结）用不存在的
+// 单号/投诉号做格式+签名探测（无副作用）。期望业务错误：退款为订单不存在类，
+// 投诉类为 10034 投诉不存在。
+func TestLiveProbeComplaint(t *testing.T) {
+	c := liveClient(t)
+	ctx := context.Background()
+	const fake = "pay360-probe-nonexistent"
+
+	tid, err := c.RefundOrders(ctx, RefundOrdersRequest{
+		OrderIDs: []string{fake + "-1", fake + "-2"}, UserID: "probe", OrderAmount: 1, RefundReason: "probe",
+	})
+	t.Logf("[refund_orders] tid=%s", tid)
+	classify(t, "refund_orders", err)
+
+	tid, err = c.ComplainReply(ctx, ComplainReplyRequest{
+		ComplainNo: fake, Content: "probe", Source: ComplainSourceNormal,
+	})
+	t.Logf("[complain_reply] tid=%s", tid)
+	classify(t, "complain_reply", err)
+	if errors.Is(err, ErrComplainNotFound) {
+		t.Logf("✅ complain_reply: 命中预期哨兵 ErrComplainNotFound(10034)")
+	}
+
+	tid, err = c.ComplainFinish(ctx, ComplainFinishRequest{ComplainNo: fake, Content: "probe"})
+	t.Logf("[complain_finish] tid=%s", tid)
+	classify(t, "complain_finish", err)
+	if errors.Is(err, ErrComplainNotFound) {
+		t.Logf("✅ complain_finish: 命中预期哨兵 ErrComplainNotFound(10034)")
+	}
+}
+
 // TestLivePaidOrder 使用真实已付订单验证查询成功响应字段解析。
 func TestLivePaidOrder(t *testing.T) {
 	c := liveClient(t)
