@@ -27,6 +27,20 @@ type TokenCache interface {
 	Store(ctx context.Context, token string, expireAt time.Time) error
 }
 
+// TokenRefreshLock 抽象 access_token 刷新锁，供多实例部署做跨副本单飞。
+//
+// Lock 必须在成功获取锁后执行 fn，并在 fn 返回前释放锁。若获取锁失败，应返回错误且不执行 fn。
+// 默认实现不加跨进程锁，仅适用于单实例或调用方不需要跨副本单飞的场景。
+type TokenRefreshLock interface {
+	Lock(ctx context.Context, fn func(context.Context) error) error
+}
+
+type noopTokenRefreshLock struct{}
+
+func (noopTokenRefreshLock) Lock(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
 // tokenSnapshot 为不可变快照，通过原子指针整体替换，保证读取无锁且一致。
 type tokenSnapshot struct {
 	token    string
@@ -61,30 +75,39 @@ func (c *Client) token(ctx context.Context) (string, error) {
 		return tok, nil
 	}
 
-	return c.refreshToken(ctx, false)
+	return c.refreshToken(ctx, "")
 }
 
 // refreshToken 刷新 access_token，并在同进程内单飞去重。
-// force 为 false 时会先双重检查缓存；force 为 true 时跳过缓存，直接换新 token。
-func (c *Client) refreshToken(ctx context.Context, force bool) (string, error) {
+// invalidToken 为空时会先双重检查缓存；非空时仅当缓存仍为该失效 token 时才换新 token。
+func (c *Client) refreshToken(ctx context.Context, invalidToken string) (string, error) {
 	c.tokenMu.Lock()
 	defer c.tokenMu.Unlock()
 
-	if !force {
-		// 双重检查：可能已有其它 goroutine 在等待锁期间完成刷新。
-		if tok, ok := c.cachedToken(ctx); ok {
-			return tok, nil
+	var token string
+	err := c.lock.Lock(ctx, func(lockCtx context.Context) error {
+		// 双重检查：可能已有其它 goroutine 或副本在等待锁期间完成刷新。
+		if tok, ok := c.cachedToken(lockCtx); ok {
+			if invalidToken == "" || tok != invalidToken {
+				token = tok
+				return nil
+			}
 		}
-	}
 
-	tok, expireAt, err := c.fetchToken(ctx)
+		tok, expireAt, err := c.fetchToken(lockCtx)
+		if err != nil {
+			return err
+		}
+		if err := c.cache.Store(lockCtx, tok, expireAt); err != nil {
+			return fmt.Errorf("pay360: store token: %w", err)
+		}
+		token = tok
+		return nil
+	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("pay360: lock token refresh: %w", err)
 	}
-	if err := c.cache.Store(ctx, tok, expireAt); err != nil {
-		return "", fmt.Errorf("pay360: store token: %w", err)
-	}
-	return tok, nil
+	return token, nil
 }
 
 // cachedToken 返回仍处于安全期（剩余有效期大于 refreshAhead）的缓存 token。

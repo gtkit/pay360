@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,22 @@ func (f *fakeClock) advance(d time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.t = f.t.Add(d)
+}
+
+type fakeRefreshLock struct {
+	mu    sync.Mutex
+	calls atomic.Int64
+	err   error
+}
+
+func (l *fakeRefreshLock) Lock(ctx context.Context, fn func(context.Context) error) error {
+	l.calls.Add(1)
+	if l.err != nil {
+		return l.err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return fn(ctx)
 }
 
 // writeResp 写出带 Header-Tid 的 JSON 响应。
@@ -181,6 +198,64 @@ func TestTokenRefreshAhead(t *testing.T) {
 	}
 }
 
+func TestTokenRefreshLockSingleFlightAcrossClients(t *testing.T) {
+	var calls atomic.Int64
+	sharedCache := newMemCache()
+	sharedLock := &fakeRefreshLock{}
+	mux := http.NewServeMux()
+	mux.HandleFunc(pathAuth, func(w http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		time.Sleep(20 * time.Millisecond)
+		writeResp(w, fmt.Sprintf(`{"errno":0,"data":{"access_token":"tok-%d","expire_time":""}}`, call))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	newLockedClient := func(t *testing.T) *Client {
+		t.Helper()
+		c, err := New(
+			"appid1", 123456, "secret1",
+			WithBaseURL(srv.URL),
+			WithClock(newFakeClock().now),
+			WithTokenCache(sharedCache),
+			WithTokenRefreshLock(sharedLock),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	c1 := newLockedClient(t)
+	c2 := newLockedClient(t)
+
+	var wg sync.WaitGroup
+	for _, c := range []*Client{c1, c2} {
+		wg.Go(func() {
+			if _, err := c.token(context.Background()); err != nil {
+				t.Errorf("token: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("auth 调用次数=%d, 期望 1", got)
+	}
+	if got := sharedLock.calls.Load(); got != 2 {
+		t.Fatalf("lock 调用次数=%d, 期望 2", got)
+	}
+}
+
+func TestTokenRefreshLockError(t *testing.T) {
+	c, err := New("a", 1, "s", WithTokenRefreshLock(&fakeRefreshLock{err: errors.New("lock busy")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.token(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "pay360: lock token refresh") {
+		t.Fatalf("应返回锁错误包装, got %v", err)
+	}
+}
+
 func mustToken(t *testing.T, c *Client, ctx context.Context) {
 	t.Helper()
 	if _, err := c.token(ctx); err != nil {
@@ -279,6 +354,78 @@ func TestCallRefreshesTokenOnAccessTokenError(t *testing.T) {
 	}
 	if authCalls.Load() != 2 || refundCalls.Load() != 2 {
 		t.Fatalf("authCalls=%d refundCalls=%d, 期望均为 2", authCalls.Load(), refundCalls.Load())
+	}
+}
+
+func TestCallReusesTokenRefreshedByPeerOnAccessTokenError(t *testing.T) {
+	var authCalls atomic.Int64
+	var refundCalls atomic.Int64
+	sharedCache := newMemCache()
+	sharedLock := &fakeRefreshLock{}
+	mux := http.NewServeMux()
+	mux.HandleFunc(pathAuth, func(w http.ResponseWriter, _ *http.Request) {
+		call := authCalls.Add(1)
+		writeResp(w, fmt.Sprintf(`{"errno":0,"data":{"access_token":"tok-%d","expire_time":""}}`, call))
+	})
+	mux.HandleFunc(pathOrderRefund, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var got map[string]any
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		call := refundCalls.Add(1)
+		if call <= 2 {
+			if got["access_token"] != "tok-1" {
+				t.Errorf("失效请求 token=%v, 期望 tok-1", got["access_token"])
+			}
+			writeResp(w, `{"errno":10012,"errmsg":"access_token 错误"}`)
+			return
+		}
+		if got["access_token"] != "tok-2" {
+			t.Errorf("重试请求 token=%v, 期望 tok-2", got["access_token"])
+		}
+		writeResp(w, `{"errno":0,"errmsg":"","data":{}}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	newLockedClient := func(t *testing.T) *Client {
+		t.Helper()
+		c, err := New(
+			"appid1", 123456, "secret1",
+			WithBaseURL(srv.URL),
+			WithClock(newFakeClock().now),
+			WithTokenCache(sharedCache),
+			WithTokenRefreshLock(sharedLock),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	c1 := newLockedClient(t)
+	c2 := newLockedClient(t)
+	if _, err := c1.token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	for _, c := range []*Client{c1, c2} {
+		wg.Go(func() {
+			_, err := c.Refund(context.Background(), RefundRequest{
+				OrderID: "o1", OrderAmount: 100, UserID: "u1", RefundReason: "test",
+			})
+			if err != nil {
+				t.Errorf("refund: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	if got := authCalls.Load(); got != 2 {
+		t.Fatalf("auth 调用次数=%d, 期望 2（初始 token + 一次刷新）", got)
+	}
+	if got := refundCalls.Load(); got != 4 {
+		t.Fatalf("refund 调用次数=%d, 期望 4", got)
 	}
 }
 

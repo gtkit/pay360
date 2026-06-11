@@ -47,6 +47,7 @@ type Client struct {
 
 	http  *httpc.Client
 	cache TokenCache
+	lock  TokenRefreshLock
 	clock func() time.Time
 
 	refreshAhead time.Duration
@@ -86,6 +87,9 @@ func New(appid string, qid int64, appsecret string, opts ...Option) (*Client, er
 	}
 	if c.cache == nil {
 		c.cache = newMemCache()
+	}
+	if c.lock == nil {
+		c.lock = noopTokenRefreshLock{}
 	}
 	return c, nil
 }
@@ -158,7 +162,7 @@ func (c *Client) call(ctx context.Context, method, path string, biz map[string]a
 
 	tid, err := c.callWithToken(ctx, method, path, biz, out, token)
 	if errors.Is(err, ErrAccessToken) {
-		token, refreshErr := c.refreshToken(ctx, true)
+		token, refreshErr := c.refreshToken(ctx, token)
 		if refreshErr != nil {
 			return tid, refreshErr
 		}

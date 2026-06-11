@@ -8,6 +8,7 @@
 
 - 覆盖文档第四章全部服务端接口（出站 + 入站回调验签）。
 - `access_token` 两层缓存：默认进程内**无锁内存缓存 + 单飞刷新**；可注入自定义 `TokenCache`（如 Redis）支持多实例共享。
+- 可注入 `TokenRefreshLock` 做多副本刷新单飞，避免“新 token 作废旧 token”导致实例间互相影响。
 - 每次调用均可获取 `Header-Tid`（成功与错误路径）。
 - 类型化错误码，支持 `errors.Is` 判定。
 - 并发安全：`Client` 构造后只读，可跨 goroutine 共享。
@@ -39,6 +40,7 @@ if err != nil {
 | `WithBaseURL(u)` | 覆盖接口域名（默认 `https://api.openstore.360.cn`），主要用于测试 |
 | `WithHTTPClient(h)` | 注入自定义 `*httpc.Client`（超时、传输等） |
 | `WithTokenCache(tc)` | 注入自定义 `access_token` 缓存（多实例共享） |
+| `WithTokenRefreshLock(l)` | 注入自定义 `access_token` 刷新锁（多副本单飞） |
 | `WithTokenRefreshAhead(d)` | token 提前刷新安全边界（默认 5 分钟） |
 | `WithClock(now)` | 注入时间源，主要用于测试 |
 
@@ -148,9 +150,13 @@ type TokenCache interface {
     Load(ctx context.Context) (token string, expireAt time.Time, ok bool, err error)
     Store(ctx context.Context, token string, expireAt time.Time) error
 }
+
+type TokenRefreshLock interface {
+    Lock(ctx context.Context, fn func(context.Context) error) error
+}
 ```
 
-**重要**：即使共享存储，若多个实例同时刷新仍会互相作废。请在 `Store`/刷新处使用分布式锁（如 Redis `SETNX`），或采用单点刷新服务，业务实例只读缓存。
+**重要**：共享存储必须配合 `WithTokenRefreshLock`。刷新流程会先获取锁，再在锁内二次读取共享缓存；若其它副本已经刷新并写入安全期 token，当前副本会直接复用，不再调用 auth。
 
 当业务接口返回 `errno=10012`（`ErrAccessToken`）时，本包会强制刷新一次 `access_token` 并用新 token 重试该业务请求一次。该重试仅覆盖鉴权失败场景；业务错误、网络错误和其它平台错误不会自动重试。
 
@@ -163,18 +169,55 @@ func (r *redisCache) Load(ctx context.Context) (string, time.Time, bool, error) 
     // GET token 与 expireAt；未命中返回 ok=false
 }
 func (r *redisCache) Store(ctx context.Context, token string, expireAt time.Time) error {
-    // 先 SETNX 分布式锁，再写入 token（带 TTL），最后释放锁
+    // SET token 与 expireAt（带 TTL）
 }
 
-c, _ := pay360.New(appid, qid, secret, pay360.WithTokenCache(&redisCache{rdb: rdb}))
+type redisLock struct{ rdb *redis.Client }
+
+func (r *redisLock) Lock(ctx context.Context, fn func(context.Context) error) error {
+    // SETNX 获取锁；获取成功后执行 fn；defer 释放锁
+}
+
+c, _ := pay360.New(
+    appid, qid, secret,
+    pay360.WithTokenCache(&redisCache{rdb: rdb}),
+    pay360.WithTokenRefreshLock(&redisLock{rdb: rdb}),
+)
 ```
+
+## 真实环境联调
+
+`live_test.go` 仅在 `-tags livetest` 下编译。凭据通过环境变量传入，禁止写入代码或提交到仓库。
+
+基础探测不会使用真实订单，主要验证签名、鉴权、字段类型和接口格式：
+
+```bash
+PAY360_APPID=... PAY360_QID=... PAY360_APPSECRET=... \
+go test -tags livetest -run 'TestLive(Auth|QueryOrder|Probe)' -count=1 -v ./...
+```
+
+真实成功链路用例在缺少环境变量时会自动跳过：
+
+| 测试 | 环境变量 |
+|------|----------|
+| 已付订单查询 | `PAY360_LIVE_PAID_ORDER_ID`、`PAY360_LIVE_PAID_USER_ID` |
+| 专票查询 | `PAY360_LIVE_SPECIAL_SOURCE_ID`，可选 `PAY360_LIVE_SPECIAL_QUERY_TYPE` |
+
+以下测试有副作用，必须显式设置开关：
+
+| 测试 | 开关 | 必填环境变量 |
+|------|------|--------------|
+| 真实退款 | `PAY360_LIVE_ENABLE_REFUND=1` | `PAY360_LIVE_REFUND_ORDER_ID`、`PAY360_LIVE_REFUND_USER_ID`、`PAY360_LIVE_REFUND_AMOUNT` |
+| 普票开具 | `PAY360_LIVE_ENABLE_INVOICE=1` | `PAY360_LIVE_INVOICE_ORDER_ID`、`PAY360_LIVE_INVOICE_TITLE`、`PAY360_LIVE_INVOICE_EMAIL` |
+| 专票开具 | `PAY360_LIVE_ENABLE_INVOICE=1` | `PAY360_LIVE_SPECIAL_INVOICE_ORDER_ID`、`PAY360_LIVE_SPECIAL_INVOICE_TITLE`、`PAY360_LIVE_SPECIAL_INVOICE_EMAIL`、`PAY360_LIVE_SPECIAL_INVOICE_TAX_REGISTER_NO`、`PAY360_LIVE_SPECIAL_INVOICE_ADDRESS`、`PAY360_LIVE_SPECIAL_INVOICE_PHONE`、`PAY360_LIVE_SPECIAL_INVOICE_BANK_NAME`、`PAY360_LIVE_SPECIAL_INVOICE_BANK_ACCOUNT`、`PAY360_LIVE_SPECIAL_INVOICE_CUSTOM_TYPE` |
+| 专票红冲 | `PAY360_LIVE_ENABLE_INVOICE_CANCEL=1` | `PAY360_LIVE_SPECIAL_CANCEL_INVOICE_NUM`、`PAY360_LIVE_SPECIAL_CANCEL_SOURCE_ID`、`PAY360_LIVE_SPECIAL_CANCEL_ORDER_ID` |
 
 ## 限流与韧性
 
 本包是无状态的薄封装，**不内置限流、熔断、重试**——这些有状态、依赖部署拓扑的韧性策略应由调用方在服务层处理（如 `golang.org/x/time/rate`、`sony/gobreaker`）。本包只负责签名、鉴权与请求执行，职责单一。
 
 - **限频**（文档规定，请自行控制）：换 token 与退款 3 次/秒、订单查询 5 次/秒、发票相关 3 次/秒。换 token 已被内部缓存+单飞天然限频；业务接口的频率由调用方保证。
-- **`access_token` 失效重试**：单实例下 token 不会被外部作废，几乎不会遇到 `errno=10012`。多实例共享缓存时，若极窄竞态窗口内 token 被其它实例作废，本包会强制刷新并自动重试一次。仍然需要共享缓存与分布式锁，避免实例间长期互相作废 token。
+- **`access_token` 失效重试**：单实例下 token 不会被外部作废，几乎不会遇到 `errno=10012`。多实例共享缓存时，若极窄竞态窗口内 token 被其它实例作废，本包会强制刷新并自动重试一次。生产多副本应同时注入 `WithTokenCache` 与 `WithTokenRefreshLock`。
 - **回调 body 大小**：`VerifyCallback`/`ParseCallback` 解析调用方传入的 body，请在 HTTP handler 用 `http.MaxBytesReader` 限制大小，防止超大请求耗内存。
 - **出站响应大小**：默认 HTTP 客户端限制响应体 ≤10 MiB，可经 `WithHTTPClient` 调整。
 

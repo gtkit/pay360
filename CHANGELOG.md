@@ -4,11 +4,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增 `TokenRefreshLock` 与 `WithTokenRefreshLock`，支持多副本部署时对 `access_token` 刷新做跨副本单飞。
+- 新增真实成功链路 `livetest` 框架，可通过环境变量验证已付订单查询、退款、普票、专票开具/查询/红冲。
+
 ### Changed
 
 - `New` 现在会拒绝小于等于 0 的 `qid`，避免构造出无效客户端。
 - 业务接口收到 `errno=10012`（`ErrAccessToken`）时会强制刷新 `access_token` 并自动重试一次。
+- token 刷新流程会在刷新锁内二次读取共享缓存，避免等待锁期间其它副本已刷新后仍重复换 token。
 - `QuerySpecialInvoice` 现在会拒绝非 `1`/`2` 的 `requestType`，避免无效专票查询请求发送到 360 平台。
+- `live_test.go` 对退款和发票类真实联调用例增加显式开关，避免误触发副作用。
 
 ### Fixed
 

@@ -29,6 +29,15 @@ func WithTokenCache(tc TokenCache) Option {
 	}
 }
 
+// WithTokenRefreshLock 注入 access_token 刷新锁（如基于 Redis/etcd 的分布式锁）。
+func WithTokenRefreshLock(l TokenRefreshLock) Option {
+	return func(c *Client) {
+		if l != nil {
+			c.lock = l
+		}
+	}
+}
+
 // WithBaseURL 覆盖接口域名（默认 https://api.openstore.360.cn）。主要用于测试。
 func WithBaseURL(u string) Option {
 	return func(c *Client) {
