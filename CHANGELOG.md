@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-11
+
 ### Added
 
 - 新增客诉接口支持（《软件管家客诉接口》V1.0）：多笔订单退款 `RefundOrders`（v2 接口，与 v1 `Refund` 并存）、投诉回复 `ComplainReply`、投诉完结 `ComplainFinish`。
