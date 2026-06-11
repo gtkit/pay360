@@ -38,6 +38,16 @@ func WithTokenRefreshLock(l TokenRefreshLock) Option {
 	}
 }
 
+// WithVendorKey 设置 360 下发的厂商密钥，用于投诉 webhook 验签
+// （见 [Client.VerifyComplaintWebhook]）。未设置时验签使用 appsecret。
+func WithVendorKey(k string) Option {
+	return func(c *Client) {
+		if k != "" {
+			c.vendorKey = k
+		}
+	}
+}
+
 // WithBaseURL 覆盖接口域名（默认 https://api.openstore.360.cn）。主要用于测试。
 func WithBaseURL(u string) Option {
 	return func(c *Client) {

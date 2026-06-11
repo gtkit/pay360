@@ -36,6 +36,9 @@ var (
 	ErrIllegalAccess       = &APIError{Code: 10014, Msg: "非法访问"}
 	ErrContentType         = &APIError{Code: 10015, Msg: "不支持的 content_type"}
 	ErrParamType           = &APIError{Code: 10016, Msg: "参数类型错误"}
+	ErrRateLimited         = &APIError{Code: 10018, Msg: "触发限流"}
+	ErrComplainNotFound    = &APIError{Code: 10034, Msg: "投诉不存在"}
+	ErrComplainReplyLimit  = &APIError{Code: 10035, Msg: "投诉回复次数超限"}
 	ErrAppNotFound         = &APIError{Code: 100001, Msg: "应用信息不存在"}
 	ErrAppOffline          = &APIError{Code: 100002, Msg: "应用信息已下线"}
 	ErrVendorNotFound      = &APIError{Code: 100003, Msg: "厂商信息不存在"}

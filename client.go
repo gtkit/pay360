@@ -32,6 +32,9 @@ const (
 	pathInvoiceSpecial       = "/main/gateway/v1/invoice/dospecial"
 	pathInvoiceSpecialQuery  = "/main/gateway/v1/invoice/queryspecial"
 	pathInvoiceSpecialCancel = "/main/gateway/v1/invoice/cancelspecial"
+	pathRefundOrders         = "/main/open/v2/orders/refund"
+	pathComplainReply        = "/main/open/v2/complains/reply"
+	pathComplainFinish       = "/main/open/v2/complains/fin"
 )
 
 const defaultRefreshAhead = 5 * time.Minute
@@ -43,6 +46,7 @@ type Client struct {
 	appid     string
 	qid       int64
 	appsecret string
+	vendorKey string
 	baseURL   string
 
 	http  *httpc.Client

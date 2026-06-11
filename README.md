@@ -6,7 +6,7 @@
 
 ## 特性
 
-- 覆盖文档第四章全部服务端接口（出站 + 入站回调验签）。
+- 覆盖文档第四章全部服务端接口（出站 + 入站回调验签），以及客诉接口文档的多笔退款、投诉回复/完结与投诉 webhook 验签。
 - `access_token` 两层缓存：默认进程内**无锁内存缓存 + 单飞刷新**；可注入自定义 `TokenCache`（如 Redis）支持多实例共享。
 - 可注入 `TokenRefreshLock` 做多副本刷新单飞，避免“新 token 作废旧 token”导致实例间互相影响。
 - 每次调用均可获取 `Header-Tid`（成功与错误路径）。
@@ -42,6 +42,7 @@ if err != nil {
 | `WithTokenCache(tc)` | 注入自定义 `access_token` 缓存（多实例共享） |
 | `WithTokenRefreshLock(l)` | 注入自定义 `access_token` 刷新锁（多副本单飞） |
 | `WithTokenRefreshAhead(d)` | token 提前刷新安全边界（默认 5 分钟） |
+| `WithVendorKey(k)` | 360 下发的厂商密钥，用于投诉 webhook 验签（未设置时用 appsecret） |
 | `WithClock(now)` | 注入时间源，主要用于测试 |
 
 > httpc 自身不提供日志。如需请求日志，构造 `*httpc.Client` 时用 `httpc.WithTransport` 注入带日志的 `http.RoundTripper`，再经 `WithHTTPClient` 注入本客户端。
@@ -144,6 +145,64 @@ func handle360Callback(c *pay360.Client) http.HandlerFunc {
 
 > **务必校验一致性**：`VerifyCallback` 保证请求确实来自 360（签名正确），并已内置核对 `app_id`/`qid` 与本客户端凭据一致（不一致返回 `ErrCallbackMismatch`）。但金额与订单数据本包不持有——发放权益前，你仍需核对 `cb.MfrOrderAmount`、`cb.MfrOrderID` 与本地订单是否相符，再决定是否发放。
 
+## 客诉接口
+
+对应《软件管家客诉接口》文档（OPENAPI 补充版本），公共参数与签名复用同一套机制。
+
+### 出站
+
+| 方法 | 说明 |
+|------|------|
+| `RefundOrders(ctx, RefundOrdersRequest)` | 多笔订单退款（v2，`OrderIDs` 列表逗号拼接发送，与 v1 `Refund` 并存） |
+| `ComplainReply(ctx, ComplainReplyRequest)` | 投诉回复（`Source` 取 `ComplainSourceNormal`/`ComplainSourceRefund`） |
+| `ComplainFinish(ctx, ComplainFinishRequest)` | 投诉完结（完结处理码 `05` 由包内固定填充） |
+
+```go
+tid, err := c.RefundOrders(ctx, pay360.RefundOrdersRequest{
+    OrderIDs:     []string{"order-1", "order-2"},
+    UserID:       "user-1",
+    OrderAmount:  9900, // 单位：分
+    RefundReason: "用户申请退款",
+})
+
+tid, err = c.ComplainReply(ctx, pay360.ComplainReplyRequest{
+    ComplainNo: "C202605140001",
+    Content:    "您好，问题已收到，我们会尽快处理。",
+    Source:     pay360.ComplainSourceNormal,
+})
+```
+
+退款成功后，如该订单关联投诉且关联订单均已关闭，平台会自动完结投诉。错误码哨兵：`ErrRateLimited`(10018)、`ErrComplainNotFound`(10034)、`ErrComplainReplyLimit`(10035)。
+
+### 投诉 webhook（入站）
+
+360 会向你在联运后台配置的回调地址推送投诉事件（`COMPLAINT_CREATED`/`REPLY_ADDED`/`STATUS_CHANGED`）。验签规则与订单推送**不同**：仅 `data`（请求原文）与 `timestamp` 参与签名，密钥优先厂商密钥（`WithVendorKey` 配置，未配置回落 appsecret）：
+
+```go
+func handleComplaint(c *pay360.Client) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        body, _ := io.ReadAll(r.Body)
+
+        wh, err := c.VerifyComplaintWebhook(body) // 验签失败返回 pay360.ErrComplaintWebhookSign
+        if err != nil {
+            http.Error(w, "invalid sign", http.StatusBadRequest)
+            return
+        }
+
+        // 平台按 HTTP 状态码判定：返回任意 2xx 即成功，失败最多重试 3 次（超时 5 秒）。
+        // 请按 wh.MessageID 做幂等；处理较慢时建议先落库返回 2xx，再异步处理。
+        switch wh.EventType {
+        case pay360.ComplaintEventCreated:       // 新投诉，wh.ComplainInfo
+        case pay360.ComplaintEventReplyAdded:    // 新增回复，wh.ReplyInfo
+        case pay360.ComplaintEventStatusChanged: // 状态变更，wh.ComplainInfo.CurrStatus
+        }
+        w.WriteHeader(http.StatusOK)
+    }
+}
+```
+
+注意：`ComplainInfo` 字段服务端按 omitempty 序列化，空值/0 可能整字段缺失；`Images` 为 base64 原始内容，展示时需自行补充 MIME 前缀。
+
 ## 错误处理
 
 业务错误为 `*pay360.APIError`，可用哨兵判定：
@@ -235,7 +294,7 @@ go test -tags livetest -run 'TestLive(Auth|QueryOrder|Probe)' -count=1 -v ./...
 
 本包是无状态的薄封装，**不内置限流、熔断、重试**——这些有状态、依赖部署拓扑的韧性策略应由调用方在服务层处理（如 `golang.org/x/time/rate`、`sony/gobreaker`）。本包只负责签名、鉴权与请求执行，职责单一。
 
-- **限频**（文档规定，请自行控制）：换 token 与退款 3 次/秒、订单查询 5 次/秒、发票相关 3 次/秒。换 token 已被内部缓存+单飞天然限频；业务接口的频率由调用方保证。
+- **限频**（文档规定，请自行控制）：换 token 与退款 3 次/秒、订单查询 5 次/秒、发票相关 3 次/秒。换 token 已被内部缓存+单飞天然限频；业务接口的频率由调用方保证。客诉接口触发限流时平台返回 `errno=10018`（`ErrRateLimited`）。
 - **`access_token` 失效重试**：单实例下 token 不会被外部作废，几乎不会遇到 `errno=10012`。多实例共享缓存时，若极窄竞态窗口内 token 被其它实例作废，本包会强制刷新并自动重试一次。生产多副本应同时注入 `WithTokenCache` 与 `WithTokenRefreshLock`。
 - **回调 body 大小**：`VerifyCallback`/`ParseCallback` 解析调用方传入的 body，请在 HTTP handler 用 `http.MaxBytesReader` 限制大小，防止超大请求耗内存。
 - **出站响应大小**：默认 HTTP 客户端限制响应体 ≤10 MiB，可经 `WithHTTPClient` 调整。

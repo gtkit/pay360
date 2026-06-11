@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增客诉接口支持（《软件管家客诉接口》V1.0）：多笔订单退款 `RefundOrders`（v2 接口，与 v1 `Refund` 并存）、投诉回复 `ComplainReply`、投诉完结 `ComplainFinish`。
+- 新增投诉 webhook 验签与解析：`VerifyComplaintWebhook`/`ParseComplaintWebhook`，按文档专用规则以请求原文 `data` 与 `timestamp` 验签；新增 `WithVendorKey` 配置厂商密钥（未配置回落 appsecret）。
+- 新增错误码哨兵 `ErrRateLimited`(10018)、`ErrComplainNotFound`(10034)、`ErrComplainReplyLimit`(10035) 与验签哨兵 `ErrComplaintWebhookSign`。
+- 新增投诉枚举常量：投诉状态 `ComplainStatus*`、来源平台 `ComplainPlatform*`、回复来源 `ComplainSource*`、事件类型 `ComplaintEvent*`。
+
 ## [0.2.0] - 2026-06-11
 
 ### Added
