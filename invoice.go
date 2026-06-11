@@ -181,6 +181,14 @@ func (c *Client) QuerySpecialInvoice(ctx context.Context, requestType, sourceID 
 	return out, nil
 }
 
+// 文档明确定义的发票取值常量。仅供组装请求时复用，
+// 请求方法不据此封闭取值集合（文档未声明集合封闭）。
+const (
+	InvoiceRedCategorySeller    = "1"               // 专票红冲类别：销方红冲
+	InvoiceRedReasonMistake     = "INVOICE_MISTAKE" // 专票红冲原因（销方红冲必填）
+	InvoiceCustomTypeEnterprise = "1"               // 专票商户类型：企业
+)
+
 // SpecialInvoiceCancelRequest 为专票红冲参数（销方红冲）。
 type SpecialInvoiceCancelRequest struct {
 	Category   string // 红冲类别，1 销方红冲

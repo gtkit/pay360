@@ -62,9 +62,7 @@ type OrderQuery struct {
 
 // IsPaid 报告订单是否处于支付成功状态（order_status 为 20、30 或 50）。
 func (o OrderQuery) IsPaid() bool {
-	return o.OrderStatus == OrderStatusPaid ||
-		o.OrderStatus == OrderStatusNotified ||
-		o.OrderStatus == OrderStatusCompleted
+	return isPaidStatus(o.OrderStatus)
 }
 
 // QueryOrder 查询订单详情。

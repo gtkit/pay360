@@ -57,6 +57,22 @@ func TestCreateOrderValidate(t *testing.T) {
 			p.OrderPayType = OrderPayTypeTask
 			p.AutopayMode = AutopayModeVendor
 		}, true},
+		{"order_pay_type 非法", func(p *CreateOrderParams) {
+			p.OrderPayType = 1
+		}, true},
+		{"纯任务单-合法且金额为 0", func(p *CreateOrderParams) {
+			p.OrderPayType = OrderPayTypeTask
+			p.TaskID = "task1"
+			p.OrderAmount = 0
+		}, false},
+		{"纯任务单-缺 task_id", func(p *CreateOrderParams) {
+			p.OrderPayType = OrderPayTypeTask
+		}, true},
+		{"纯任务单-金额为负", func(p *CreateOrderParams) {
+			p.OrderPayType = OrderPayTypeTask
+			p.TaskID = "task1"
+			p.OrderAmount = -1
+		}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,6 +133,31 @@ func TestMarshalForSDKAutopay(t *testing.T) {
 	}
 	if m["task_id"] != "task9" {
 		t.Errorf("任务单应含 task_id, got %v", m["task_id"])
+	}
+}
+
+func TestMarshalForSDKPureTask(t *testing.T) {
+	p := validBase()
+	p.OrderPayType = OrderPayTypeTask
+	p.TaskID = "task1"
+	p.OrderAmount = 0
+
+	data, err := p.MarshalForSDK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["order_pay_type"] != float64(OrderPayTypeTask) || m["task_id"] != "task1" {
+		t.Fatalf("纯任务单应输出 order_pay_type=3 与 task_id, got %v", m)
+	}
+	// 未开代扣不应输出代扣字段
+	for _, k := range []string{"auto_pay_status", "period_type", "period", "execute_time", "auto_pay_amount", "ext"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("纯任务单不应含代扣字段 %q", k)
+		}
 	}
 }
 

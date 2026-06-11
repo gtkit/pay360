@@ -13,6 +13,13 @@ const (
 	OrderStatusClosed    = 70 // 交易关闭（退款完成）
 )
 
+// isPaidStatus 报告 order_status 是否属于文档定义的支付成功状态（20、30、50）。
+func isPaidStatus(status int) bool {
+	return status == OrderStatusPaid ||
+		status == OrderStatusNotified ||
+		status == OrderStatusCompleted
+}
+
 // 支付渠道（pay_channel / pay_chanel）。
 const (
 	PayChannelTask          = -1 // 任务单

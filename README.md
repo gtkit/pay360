@@ -64,6 +64,21 @@ data, err := p.MarshalForSDK() // 下发给前端，前端传入 SDK360.createOr
 
 开启代扣时设 `AutoPayStatus = pay360.AutoPayEnabled` 并填写一组代扣字段，`Validate`/`MarshalForSDK` 会强制「代扣必填」校验并自动组装 `ext`（`autopay_mode`）。包内提供 `OrderStatus*`、`PayChannel*`、`PeriodType*`、`OrderPayType*`、`AutoPayEnabled/Disabled`、`AutopayMode*` 等枚举常量，供服务端解析回调/查询及与前端约定时共用。
 
+任务单（任务系统，文档 3.2/3.5）独立于代扣：设 `OrderPayType = pay360.OrderPayTypeTask` 并填写 `TaskID` 即可构造纯任务单，无须开启代扣，且任务单允许 `OrderAmount` 为 0：
+
+```go
+p := pay360.CreateOrderParams{
+    OrderID:      genOrderID(),
+    OrderAmount:  0, // 任务单允许 0 金额
+    CreateTime:   strconv.FormatInt(time.Now().Unix(), 10),
+    UserID:       "user-1",
+    ProductID:    "task-product-1",
+    ProductName:  "任务奖励",
+    OrderPayType: pay360.OrderPayTypeTask,
+    TaskID:       "task-36",
+}
+```
+
 ## 出站接口
 
 | 方法 | 说明 |
@@ -79,6 +94,8 @@ data, err := p.MarshalForSDK() // 下发给前端，前端传入 SDK360.createOr
 | `SpecialInvoiceCancel(ctx, SpecialInvoiceCancelRequest)` | 专票红冲 |
 
 多数方法返回 `(headerTid string, err error)`；返回数据的方法（查询、开具）返回带 `HeaderTid` 字段的结果结构。
+
+发票相关的文档取值提供常量：`InvoiceRedCategorySeller`（红冲类别 1 销方红冲）、`InvoiceRedReasonMistake`（红冲原因 `INVOICE_MISTAKE`）、`InvoiceCustomTypeEnterprise`（商户类型 1 企业）。
 
 ```go
 tid, err := c.Refund(ctx, pay360.RefundRequest{
@@ -103,14 +120,16 @@ func handle360Callback(c *pay360.Client) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         body, _ := io.ReadAll(r.Body)
 
-        cb, err := c.VerifyCallback(body) // 验签失败返回 pay360.ErrCallbackSign
+        // 验签失败返回 pay360.ErrCallbackSign；
+        // 验签通过但 app_id/qid 与本客户端凭据不一致返回 pay360.ErrCallbackMismatch
+        cb, err := c.VerifyCallback(body)
         if err != nil {
-            http.Error(w, "invalid sign", http.StatusBadRequest)
+            http.Error(w, "invalid callback", http.StatusBadRequest)
             return
         }
 
         switch cb.CallbackType {
-        case pay360.CallbackOrderStatus: // 1 普通支付/退款，需下发权益
+        case pay360.CallbackOrderStatus: // 1 普通支付/退款，cb.IsPaid() 为 true 时下发权益
         case pay360.CallbackAutopay:     // 2 代扣推送，据 cb.Extra.MfrOrderID 创建订单
         case pay360.CallbackSign:        // 3 签约/取消签约通知
         }
@@ -123,7 +142,7 @@ func handle360Callback(c *pay360.Client) http.HandlerFunc {
 }
 ```
 
-> **务必校验一致性**：`VerifyCallback` 只保证请求确实来自 360（签名正确）。发放权益前，你仍需核对回调中的 `cb.AppID` / `cb.Qid` 是否与本应用一致，并核对 `cb.MfrOrderAmount`、`cb.MfrOrderID` 与本地订单是否相符，再决定是否发放。
+> **务必校验一致性**：`VerifyCallback` 保证请求确实来自 360（签名正确），并已内置核对 `app_id`/`qid` 与本客户端凭据一致（不一致返回 `ErrCallbackMismatch`）。但金额与订单数据本包不持有——发放权益前，你仍需核对 `cb.MfrOrderAmount`、`cb.MfrOrderID` 与本地订单是否相符，再决定是否发放。
 
 ## 错误处理
 

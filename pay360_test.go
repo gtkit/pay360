@@ -546,7 +546,10 @@ func TestIsPaid(t *testing.T) {
 		paid   bool
 	}{{10, false}, {20, true}, {30, true}, {40, false}, {50, true}, {60, false}, {70, false}} {
 		if (OrderQuery{OrderStatus: tc.status}).IsPaid() != tc.paid {
-			t.Errorf("status %d: 期望 paid=%v", tc.status, tc.paid)
+			t.Errorf("OrderQuery status %d: 期望 paid=%v", tc.status, tc.paid)
+		}
+		if (Callback{OrderStatus: tc.status}).IsPaid() != tc.paid {
+			t.Errorf("Callback status %d: 期望 paid=%v", tc.status, tc.paid)
 		}
 	}
 }
@@ -647,13 +650,30 @@ func TestPlainInvoiceCancelCodeError(t *testing.T) {
 
 func TestSpecialInvoiceFlow(t *testing.T) {
 	srv := muxServer(t, map[string]http.HandlerFunc{
-		pathInvoiceSpecial: func(w http.ResponseWriter, _ *http.Request) {
+		pathInvoiceSpecial: func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			var m map[string]any
+			if err := json.Unmarshal(body, &m); err != nil {
+				t.Errorf("decode special invoice body: %v", err)
+			}
+			if m["custom_type"] != "1" {
+				t.Errorf("custom_type 与文档取值不一致: %v", m["custom_type"])
+			}
 			writeResp(w, `{"errno":0,"data":{"source_id":"src-1"}}`)
 		},
 		pathInvoiceSpecialQuery: func(w http.ResponseWriter, _ *http.Request) {
 			writeResp(w, `{"errno":0,"data":{"status":"SUCCESS_END","invoice_num":"n1"}}`)
 		},
-		pathInvoiceSpecialCancel: func(w http.ResponseWriter, _ *http.Request) {
+		pathInvoiceSpecialCancel: func(w http.ResponseWriter, r *http.Request) {
+			// 以常量组装的请求，线上参数值应与文档取值一致
+			body, _ := io.ReadAll(r.Body)
+			var m map[string]any
+			if err := json.Unmarshal(body, &m); err != nil {
+				t.Errorf("decode cancel body: %v", err)
+			}
+			if m["category"] != "1" || m["red_reason"] != "INVOICE_MISTAKE" {
+				t.Errorf("红冲参数与文档取值不一致: category=%v red_reason=%v", m["category"], m["red_reason"])
+			}
 			writeResp(w, `{"errno":0,"data":{}}`)
 		},
 	})
@@ -662,7 +682,8 @@ func TestSpecialInvoiceFlow(t *testing.T) {
 
 	r, err := c.SpecialInvoice(ctx, SpecialInvoiceRequest{
 		OrderID: "o", InvoiceTitle: "t", UserEmail: "e@x.com", TaxRegisterNo: "TAX123456789012",
-		Address: "addr", Phone: "010", BankName: "bank", BankAccount: "acc", CustomType: "1",
+		Address: "addr", Phone: "010", BankName: "bank", BankAccount: "acc",
+		CustomType: InvoiceCustomTypeEnterprise,
 	})
 	if err != nil || r.SourceID != "src-1" {
 		t.Fatalf("special invoice: r=%+v err=%v", r, err)
@@ -674,7 +695,8 @@ func TestSpecialInvoiceFlow(t *testing.T) {
 	}
 
 	if _, err := c.SpecialInvoiceCancel(ctx, SpecialInvoiceCancelRequest{
-		Category: "1", InvoiceNum: "n1", RedReason: "INVOICE_MISTAKE", SourceID: "src-1", OrderID: "o",
+		Category: InvoiceRedCategorySeller, InvoiceNum: "n1", RedReason: InvoiceRedReasonMistake,
+		SourceID: "src-1", OrderID: "o",
 	}); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
@@ -703,12 +725,12 @@ func TestQuerySpecialInvoiceRejectsInvalidRequestType(t *testing.T) {
 func TestVerifyCallback(t *testing.T) {
 	c, _ := New("a", 1, "secret1")
 	params := map[string]string{
-		"app_id": "x", "callback_type": "1", "mfr_order_amount": "9900",
-		"mfr_order_id": "mo1", "order_status": "30", "qid": "11111111", "timestamp": "1709266143",
+		"app_id": "a", "callback_type": "1", "mfr_order_amount": "9900",
+		"mfr_order_id": "mo1", "order_status": "30", "qid": "1", "timestamp": "1709266143",
 		"order_extra": "",
 	}
 	sign := buildSign(params, "secret1")
-	body := fmt.Sprintf(`{"app_id":"x","callback_type":1,"mfr_order_amount":9900,"mfr_order_id":"mo1","order_status":30,"qid":11111111,"timestamp":1709266143,"order_extra":"","sign":%q}`, sign)
+	body := fmt.Sprintf(`{"app_id":"a","callback_type":1,"mfr_order_amount":9900,"mfr_order_id":"mo1","order_status":30,"qid":1,"timestamp":1709266143,"order_extra":"","sign":%q}`, sign)
 
 	cb, err := c.VerifyCallback([]byte(body))
 	if err != nil {
@@ -717,11 +739,38 @@ func TestVerifyCallback(t *testing.T) {
 	if cb.CallbackType != 1 || cb.MfrOrderID != "mo1" || cb.OrderStatus != 30 {
 		t.Fatalf("cb=%+v", cb)
 	}
+	if !cb.IsPaid() {
+		t.Fatal("order_status=30 应判定为支付成功")
+	}
 
 	// 篡改后应失败
 	bad := fmt.Sprintf(`{"app_id":"y","callback_type":1,"sign":%q}`, sign)
 	if _, err := c.VerifyCallback([]byte(bad)); !errors.Is(err, ErrCallbackSign) {
 		t.Fatalf("篡改应验签失败, err=%v", err)
+	}
+}
+
+func TestVerifyCallbackMismatch(t *testing.T) {
+	c, _ := New("a", 1, "secret1")
+
+	// 验签通过但 app_id 不一致
+	params := map[string]string{"app_id": "other", "callback_type": "1", "qid": "1", "timestamp": "1709266143"}
+	body := fmt.Sprintf(`{"app_id":"other","callback_type":1,"qid":1,"timestamp":1709266143,"sign":%q}`, buildSign(params, "secret1"))
+	if _, err := c.VerifyCallback([]byte(body)); !errors.Is(err, ErrCallbackMismatch) {
+		t.Fatalf("app_id 不一致应返回 ErrCallbackMismatch, err=%v", err)
+	}
+
+	// 验签通过但 qid 不一致
+	params = map[string]string{"app_id": "a", "callback_type": "1", "qid": "2", "timestamp": "1709266143"}
+	body = fmt.Sprintf(`{"app_id":"a","callback_type":1,"qid":2,"timestamp":1709266143,"sign":%q}`, buildSign(params, "secret1"))
+	if _, err := c.VerifyCallback([]byte(body)); !errors.Is(err, ErrCallbackMismatch) {
+		t.Fatalf("qid 不一致应返回 ErrCallbackMismatch, err=%v", err)
+	}
+
+	// 验签失败优先于一致性校验：sign 错误且 app_id 也不一致时报验签失败
+	bad := `{"app_id":"other","callback_type":1,"qid":1,"timestamp":1709266143,"sign":"deadbeef"}`
+	if _, err := c.VerifyCallback([]byte(bad)); !errors.Is(err, ErrCallbackSign) {
+		t.Fatalf("sign 错误应优先返回 ErrCallbackSign, err=%v", err)
 	}
 }
 
@@ -736,17 +785,33 @@ func TestParseCallbackOrderExtra(t *testing.T) {
 	}
 }
 
+func TestParseCallbackTopLevelSignFields(t *testing.T) {
+	// 顶层签约字段与 order_extra 内同名字段独立解析、互不影响。
+	body := `{"callback_type":3,"agreement_number":"top-ag","auto_pay_status":1,"order_extra":"{\"agreement_number\":\"ag1\",\"auto_pay_status\":2}"}`
+	cb, err := ParseCallback([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cb.AgreementNumber != "top-ag" || cb.AutoPayStatus != AutoPayStatusOpen {
+		t.Fatalf("顶层签约字段解析错误: cb=%+v", cb)
+	}
+	if cb.Extra.AgreementNumber != "ag1" || cb.Extra.AutoPayStatus != AutoPayStatusCancel {
+		t.Fatalf("order_extra 内字段不应被顶层覆盖: extra=%+v", cb.Extra)
+	}
+}
+
 func TestVerifyCallbackLargeInteger(t *testing.T) {
 	// 超过 2^53 的整数字段：若经 float64 中转会被改写导致验签失败。
 	c, _ := New("a", 1, "secret1")
 	params := map[string]string{
+		"app_id":           "a",
 		"callback_type":    "1",
 		"mfr_order_amount": "9007199254740993",
-		"qid":              "11111111",
+		"qid":              "1",
 		"timestamp":        "1709266143",
 	}
 	sign := buildSign(params, "secret1")
-	body := fmt.Sprintf(`{"callback_type":1,"mfr_order_amount":9007199254740993,"qid":11111111,"timestamp":1709266143,"sign":%q}`, sign)
+	body := fmt.Sprintf(`{"app_id":"a","callback_type":1,"mfr_order_amount":9007199254740993,"qid":1,"timestamp":1709266143,"sign":%q}`, sign)
 	if _, err := c.VerifyCallback([]byte(body)); err != nil {
 		t.Fatalf("大整数应验签通过（保留原始字面量）, err=%v", err)
 	}

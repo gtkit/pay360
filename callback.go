@@ -24,6 +24,10 @@ const (
 // ErrCallbackSign 表示回调验签失败。
 var ErrCallbackSign = errors.New("pay360: callback sign mismatch")
 
+// ErrCallbackMismatch 表示回调验签通过但其中的 app_id/qid 与客户端凭据不一致，
+// 调用方不应处理该回调（它属于其它应用）。
+var ErrCallbackMismatch = errors.New("pay360: callback appid/qid mismatch")
+
 // OrderExtra 为回调中 order_extra 字段（JSON 字符串）解析后的内容。
 type OrderExtra struct {
 	MfrOrderID      string `json:"mfr_order_id"`
@@ -32,25 +36,36 @@ type OrderExtra struct {
 }
 
 // Callback 为厂商订单推送回调的解析结果。
+//
+// AgreementNumber 与 AutoPayStatus 为文档 4.1.2.4 参数表列出的顶层签约字段；
+// 推送示例中同名信息也可能出现在 order_extra 内（见 Extra），两处独立解析。
 type Callback struct {
-	AppID          string `json:"app_id"`
-	BankTradeCode  string `json:"bank_trade_code"`
-	CallbackType   int    `json:"callback_type"`
-	MfrOrderAmount int64  `json:"mfr_order_amount"`
-	MfrOrderID     string `json:"mfr_order_id"`
-	MfrProductID   string `json:"mfr_product_id"`
-	MfrProductName string `json:"mfr_product_name"`
-	OrderCode      string `json:"order_code"`
-	OrderExtra     string `json:"order_extra"`
-	OrderStatus    int    `json:"order_status"`
-	PayChannel     int    `json:"pay_channel"`
-	Qid            int64  `json:"qid"`
-	Sign           string `json:"sign"`
-	Timestamp      int64  `json:"timestamp"`
-	TransTime      string `json:"trans_time"`
+	AppID           string `json:"app_id"`
+	AgreementNumber string `json:"agreement_number"` // 签约号
+	AutoPayStatus   int    `json:"auto_pay_status"`  // 签约状态：1 开通签约，2 取消签约
+	BankTradeCode   string `json:"bank_trade_code"`
+	CallbackType    int    `json:"callback_type"`
+	MfrOrderAmount  int64  `json:"mfr_order_amount"`
+	MfrOrderID      string `json:"mfr_order_id"`
+	MfrProductID    string `json:"mfr_product_id"`
+	MfrProductName  string `json:"mfr_product_name"`
+	OrderCode       string `json:"order_code"`
+	OrderExtra      string `json:"order_extra"`
+	OrderStatus     int    `json:"order_status"`
+	PayChannel      int    `json:"pay_channel"`
+	Qid             int64  `json:"qid"`
+	Sign            string `json:"sign"`
+	Timestamp       int64  `json:"timestamp"`
+	TransTime       string `json:"trans_time"`
 
 	// Extra 为 OrderExtra 字段解析后的结构（callback_type 为 2/3 时有意义）。
 	Extra OrderExtra `json:"-"`
+}
+
+// IsPaid 报告回调订单是否处于支付成功状态（order_status 为 20、30 或 50），
+// 与 [OrderQuery.IsPaid] 语义一致。
+func (cb Callback) IsPaid() bool {
+	return isPaidStatus(cb.OrderStatus)
 }
 
 // ParseCallback 解析厂商订单推送回调的请求体，并解析内嵌的 order_extra。
@@ -71,7 +86,9 @@ func ParseCallback(body []byte) (*Callback, error) {
 // VerifyCallback 验签并解析厂商订单推送回调。
 //
 // 验签规则与出站一致（空值不参与），签名盐为本客户端的 appsecret。
-// 验签失败返回 [ErrCallbackSign]。务必在发放权益前完成验签与数据一致性校验。
+// 验签失败返回 [ErrCallbackSign]；验签通过但回调中的 app_id/qid 与客户端凭据
+// 不一致时返回 [ErrCallbackMismatch]。金额与订单数据的一致性核对仍由调用方
+// 在发放权益前完成（本包不持有订单数据）。
 func (c *Client) VerifyCallback(body []byte) (*Callback, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
@@ -91,7 +108,14 @@ func (c *Client) VerifyCallback(body []byte) (*Callback, error) {
 	if !signEqual(buildSign(params, c.appsecret), got) {
 		return nil, ErrCallbackSign
 	}
-	return ParseCallback(body)
+	cb, err := ParseCallback(body)
+	if err != nil {
+		return nil, err
+	}
+	if cb.AppID != c.appid || cb.Qid != c.qid {
+		return nil, ErrCallbackMismatch
+	}
+	return cb, nil
 }
 
 // stringifyParams 把验签所需的顶层参数转为字符串形式。

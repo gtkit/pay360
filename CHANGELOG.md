@@ -4,16 +4,32 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-11
+
 ### Added
 
 - 新增 `TokenRefreshLock` 与 `WithTokenRefreshLock`，支持多副本部署时对 `access_token` 刷新做跨副本单飞。
+- `CreateOrderParams` 支持纯任务单：`OrderPayType` 为任务单时无须开启代扣即可构造与序列化（输出 `order_pay_type` 与 `task_id`），且任务单允许订单金额为 0（依据文档任务示例）。
+- 回调 `Callback` 新增文档参数表中的顶层字段 `AgreementNumber`（签约号）、`AutoPayStatus`（签约状态）。
+- 回调 `Callback` 新增 `IsPaid()`，按「20、30、50 视为支付成功」判定，与 `OrderQuery.IsPaid()` 语义一致。
+- 新增发票文档取值常量：`InvoiceRedCategorySeller`（红冲类别 1 销方红冲）、`InvoiceRedReasonMistake`（红冲原因 `INVOICE_MISTAKE`）、`InvoiceCustomTypeEnterprise`（商户类型 1 企业）。
+- 新增错误哨兵 `ErrCallbackMismatch`，表示回调凭据与客户端不一致。
+
+### Changed
+
+- `VerifyCallback` 验签通过后会校验回调中的 `app_id`/`qid` 是否与客户端凭据一致，不一致返回 `ErrCallbackMismatch`，避免误处理其它应用的回调（校验收紧：此前此类回调可通过验签）。
+- token 刷新流程会在刷新锁内二次读取共享缓存，避免等待锁期间其它副本已刷新后仍重复换 token。
+
+## [0.1.1] - 2026-06-08
+
+### Added
+
 - 新增真实成功链路 `livetest` 框架，可通过环境变量验证已付订单查询、退款、普票、专票开具/查询/红冲。
 
 ### Changed
 
 - `New` 现在会拒绝小于等于 0 的 `qid`，避免构造出无效客户端。
 - 业务接口收到 `errno=10012`（`ErrAccessToken`）时会强制刷新 `access_token` 并自动重试一次。
-- token 刷新流程会在刷新锁内二次读取共享缓存，避免等待锁期间其它副本已刷新后仍重复换 token。
 - `QuerySpecialInvoice` 现在会拒绝非 `1`/`2` 的 `requestType`，避免无效专票查询请求发送到 360 平台。
 - `live_test.go` 对退款和发票类真实联调用例增加显式开关，避免误触发副作用。
 
