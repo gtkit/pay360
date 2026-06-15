@@ -45,8 +45,8 @@ type OrderQueryRequest struct {
 	UserID  string // 用户 ID
 }
 
-// OrderQuery 为订单查询返回的订单详情。
-type OrderQuery struct {
+// OrderQueryResponse 为订单查询返回的订单详情。
+type OrderQueryResponse struct {
 	MfrOrderID      string `json:"mfr_order_id"`      // 厂商订单编号
 	MfrOrderAmount  int64  `json:"mfr_order_amount"`  // 厂商订单金额，单位：分
 	MfrCreateTime   string `json:"mfr_create_time"`   // 厂商订单创建时间
@@ -63,16 +63,16 @@ type OrderQuery struct {
 }
 
 // IsPaid 报告订单是否处于支付成功状态（order_status 为 20、30 或 50）。
-func (o OrderQuery) IsPaid() bool {
+func (o OrderQueryResponse) IsPaid() bool {
 	return isPaidStatus(o.OrderStatus)
 }
 
 // QueryOrder 查询订单详情。
 //
 // 注意：请勿通过客户端轮询此接口；SDK 本身会通过订单推送通知状态变更。
-func (c *Client) QueryOrder(ctx context.Context, req OrderQueryRequest) (OrderQuery, error) {
+func (c *Client) QueryOrder(ctx context.Context, req OrderQueryRequest) (OrderQueryResponse, error) {
 	if req.OrderID == "" || req.UserID == "" {
-		return OrderQuery{}, fmt.Errorf("pay360: query order: order_id/user_id 均为必填")
+		return OrderQueryResponse{}, fmt.Errorf("pay360: query order: order_id/user_id 均为必填")
 	}
 	biz := map[string]any{
 		"order_id": req.OrderID,
@@ -84,11 +84,11 @@ func (c *Client) QueryOrder(ctx context.Context, req OrderQueryRequest) (OrderQu
 	}
 	tid, err := c.call(ctx, http.MethodGet, pathOrderQuery, biz, &resp)
 	if err != nil {
-		return OrderQuery{HeaderTid: tid}, err
+		return OrderQueryResponse{HeaderTid: tid}, err
 	}
-	var o OrderQuery
+	var o OrderQueryResponse
 	if derr := decodeData(resp.Data, &o); derr != nil {
-		return OrderQuery{HeaderTid: tid}, fmt.Errorf("pay360: query order: decode data: %w", derr)
+		return OrderQueryResponse{HeaderTid: tid}, fmt.Errorf("pay360: query order: decode data: %w", derr)
 	}
 	o.HeaderTid = tid
 	return o, nil

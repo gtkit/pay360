@@ -85,7 +85,7 @@ p := pay360.CreateOrderParams{
 | 方法 | 说明 |
 |------|------|
 | `Refund(ctx, RefundRequest)` | 订单退款申请 |
-| `QueryOrder(ctx, OrderQueryRequest)` | 订单查询（返回 `OrderQuery`，`IsPaid()` 判定支付成功） |
+| `QueryOrder(ctx, OrderQueryRequest)` | 订单查询（返回 `OrderQueryResponse`，`IsPaid()` 判定支付成功） |
 | `DoPost(ctx, DoPostRequest)` | 厂商侧发起代扣 |
 | `CancelSign(ctx, CancelSignRequest)` | 厂商侧取消签约 |
 | `PlainInvoice(ctx, PlainInvoiceRequest)` | 普票开具 |

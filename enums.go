@@ -2,7 +2,7 @@ package pay360
 
 // 订单状态码（order_status，用于订单查询响应与订单推送回调）。
 //
-// 其中 20、30、50 均视为支付成功状态（见 [OrderQuery.IsPaid]）。
+// 其中 20、30、50 均视为支付成功状态（见 [OrderQueryResponse.IsPaid]）。
 const (
 	OrderStatusPending   = 10 // 待付款（初始状态）
 	OrderStatusPaid      = 20 // 付款完成（待通知厂商）

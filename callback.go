@@ -63,7 +63,7 @@ type Callback struct {
 }
 
 // IsPaid 报告回调订单是否处于支付成功状态（order_status 为 20、30 或 50），
-// 与 [OrderQuery.IsPaid] 语义一致。
+// 与 [OrderQueryResponse.IsPaid] 语义一致。
 func (cb Callback) IsPaid() bool {
 	return isPaidStatus(cb.OrderStatus)
 }

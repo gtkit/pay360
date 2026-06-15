@@ -545,8 +545,8 @@ func TestIsPaid(t *testing.T) {
 		status int
 		paid   bool
 	}{{10, false}, {20, true}, {30, true}, {40, false}, {50, true}, {60, false}, {70, false}} {
-		if (OrderQuery{OrderStatus: tc.status}).IsPaid() != tc.paid {
-			t.Errorf("OrderQuery status %d: 期望 paid=%v", tc.status, tc.paid)
+		if (OrderQueryResponse{OrderStatus: tc.status}).IsPaid() != tc.paid {
+			t.Errorf("OrderQueryResponse status %d: 期望 paid=%v", tc.status, tc.paid)
 		}
 		if (Callback{OrderStatus: tc.status}).IsPaid() != tc.paid {
 			t.Errorf("Callback status %d: 期望 paid=%v", tc.status, tc.paid)
